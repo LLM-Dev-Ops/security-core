@@ -1,0 +1,36 @@
+{
+  "name": "llm-security-core",
+  "version": "1.0.0",
+  "description": "Phase-8 / Layer-3 core integration bundle for security orchestration",
+  "main": "dist/lib.js",
+  "types": "dist/lib.d.ts",
+  "bin": {
+    "llm-security": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/tests/*.test.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "claude-flow": "^2.7.47"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.10.0"
+  },
+  "peerDependencies": {
+    "llm-shield": "^1.0.0",
+    "llm-edge-agent": "^1.0.0",
+    "llm-incident-manager": "^1.0.0",
+    "llm-policy-engine": "^1.0.0",
+    "llm-config-manager": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "llm-shield": { "optional": true },
+    "llm-edge-agent": { "optional": true },
+    "llm-incident-manager": { "optional": true },
+    "llm-policy-engine": { "optional": true },
+    "llm-config-manager": { "optional": true }
+  }
+}
