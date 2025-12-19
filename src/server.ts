@@ -19,7 +19,11 @@ const orchestrator = new SecurityOrchestrator({
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'healthy' }));
+    res.end(JSON.stringify({
+      status: 'healthy',
+      service: 'security-core',
+      version: process.env.npm_package_version || 'unknown'
+    }));
     return;
   }
 
