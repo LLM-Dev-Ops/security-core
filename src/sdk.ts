@@ -10,6 +10,14 @@ export {
   type IncidentAdapter,
   type PolicyAdapter,
   type ConfigAdapter,
+  // Execution span types
+  type SpanType,
+  type SpanStatus,
+  type ExecutionSpan,
+  type ExecutionArtifact,
+  type EvidenceReference,
+  type ExecutionGraph,
+  type CoreExecutionResult,
   // Core orchestrator
   SecurityOrchestrator,
   // Handlers
@@ -20,7 +28,16 @@ export {
   createEdgeAgentAdapter,
   createIncidentAdapter,
   createPolicyAdapter,
-  createConfigAdapter
+  createConfigAdapter,
+  // Execution span utilities
+  createSpan,
+  finalizeSpan,
+  failSpan,
+  attachArtifact,
+  attachEvidence,
+  hashEvidence,
+  validateExecutionGraph,
+  buildExecutionGraph
 } from './lib.js';
 
 import { SecurityOrchestrator } from './services/orchestrator.js';

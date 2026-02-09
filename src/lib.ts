@@ -69,3 +69,24 @@ export { createEdgeAgentAdapter } from './adapters/edge-agent.js';
 export { createIncidentAdapter } from './adapters/incident.js';
 export { createPolicyAdapter } from './adapters/policy.js';
 export { createConfigAdapter } from './adapters/config.js';
+
+// Execution span types and utilities (agentics-execution-engine)
+export type {
+  SpanType,
+  SpanStatus,
+  ExecutionSpan,
+  ExecutionArtifact,
+  EvidenceReference,
+  ExecutionGraph,
+  CoreExecutionResult
+} from './execution/types.js';
+export {
+  createSpan,
+  finalizeSpan,
+  failSpan,
+  attachArtifact,
+  attachEvidence,
+  hashEvidence,
+  validateExecutionGraph,
+  buildExecutionGraph
+} from './execution/span.js';
