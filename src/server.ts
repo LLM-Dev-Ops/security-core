@@ -6,7 +6,7 @@ import { createEdgeAgentAdapter } from './adapters/edge-agent.js';
 import { createIncidentAdapter } from './adapters/incident.js';
 import { createPolicyAdapter } from './adapters/policy.js';
 import { createConfigAdapter } from './adapters/config.js';
-import type { SecurityRequest } from './lib.js';
+import type { SecurityRequest, SecurityGateOptions } from './lib.js';
 
 const orchestrator = new SecurityOrchestrator({
   shield: createShieldAdapter(),
@@ -35,6 +35,28 @@ const server = http.createServer(async (req, res) => {
         const request: SecurityRequest = JSON.parse(body);
         const result = await orchestrator.process(request);
         res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: (err as Error).message }));
+      }
+    });
+    return;
+  }
+
+  // Gate endpoint: required entry point for enterprise simulations
+  if (req.method === 'POST' && req.url === '/gate') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const { request, options } = JSON.parse(body) as {
+          request: SecurityRequest;
+          options?: SecurityGateOptions;
+        };
+        const result = await orchestrator.executeGate(request, options);
+        const statusCode = result.gate.decision === 'allow' ? 200 : 403;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });

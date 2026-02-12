@@ -10,6 +10,11 @@ export {
   type IncidentAdapter,
   type PolicyAdapter,
   type ConfigAdapter,
+  // Gate types (enterprise simulation gating)
+  type GateDecision,
+  type GateResult,
+  type SecurityGateOptions,
+  type GateExecutionResult,
   // Execution span types
   type SpanType,
   type SpanStatus,
@@ -23,6 +28,7 @@ export {
   // Handlers
   handleSecurityRequest,
   handleSecurityEvent,
+  handleSecurityGate,
   // Adapter factories
   createShieldAdapter,
   createEdgeAgentAdapter,

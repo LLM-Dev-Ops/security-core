@@ -25,8 +25,29 @@ export interface SecurityResult {
 
 export interface PolicyDecision {
   policyId: string;
-  action: 'allow' | 'deny' | 'filter' | 'redact';
+  action: 'allow' | 'deny' | 'filter' | 'redact' | 'require-approval';
   reason?: string;
+}
+
+// ============================================================================
+// Gate types - Security-Core as a required gate for enterprise simulations
+// ============================================================================
+
+export type GateDecision = 'allow' | 'deny' | 'require-approval';
+
+export interface GateResult {
+  requestId: string;
+  decision: GateDecision;
+  policyDecisions: PolicyDecision[];
+  shieldResult: { filtered: string; redactions: SecurityResult['redactions'] };
+  violations?: Array<{ policy: string; severity: 'low' | 'medium' | 'high' | 'critical' }>;
+  incidentId?: string;
+  policyExempt: boolean;
+}
+
+export interface SecurityGateOptions {
+  policyExempt?: boolean;
+  parentSpanId?: string;
 }
 
 export interface IncidentSignal {
@@ -62,8 +83,8 @@ export interface ConfigAdapter {
 // Re-exports
 // ============================================================================
 
-export { SecurityOrchestrator } from './services/orchestrator.js';
-export { handleSecurityRequest, handleSecurityEvent } from './handlers/security.js';
+export { SecurityOrchestrator, type GateExecutionResult } from './services/orchestrator.js';
+export { handleSecurityRequest, handleSecurityEvent, handleSecurityGate } from './handlers/security.js';
 export { createShieldAdapter } from './adapters/shield.js';
 export { createEdgeAgentAdapter } from './adapters/edge-agent.js';
 export { createIncidentAdapter } from './adapters/incident.js';

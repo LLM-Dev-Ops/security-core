@@ -1,5 +1,5 @@
 // Security request and event handlers
-import type { SecurityRequest, SecurityResult, IncidentSignal } from '../lib.js';
+import type { SecurityRequest, SecurityResult, GateResult, SecurityGateOptions } from '../lib.js';
 import { SecurityOrchestrator, OrchestratorConfig } from '../services/orchestrator.js';
 
 let orchestrator: SecurityOrchestrator | null = null;
@@ -15,6 +15,16 @@ export async function handleSecurityRequest(request: SecurityRequest): Promise<S
   return orchestrator.process(request);
 }
 
+export async function handleSecurityGate(
+  request: SecurityRequest,
+  options?: SecurityGateOptions
+): Promise<GateResult> {
+  if (!orchestrator) {
+    throw new Error('SecurityOrchestrator not initialized. Call initializeOrchestrator first.');
+  }
+  return orchestrator.gate(request, options);
+}
+
 export async function handleSecurityEvent(event: { type: string; payload: unknown }): Promise<void> {
   if (!orchestrator) {
     throw new Error('SecurityOrchestrator not initialized. Call initializeOrchestrator first.');
@@ -24,6 +34,9 @@ export async function handleSecurityEvent(event: { type: string; payload: unknow
   switch (event.type) {
     case 'security.request':
       await orchestrator.process(event.payload as SecurityRequest);
+      break;
+    case 'security.gate':
+      await orchestrator.gate(event.payload as SecurityRequest);
       break;
     case 'security.config.reload':
       // Config changes are handled by LLM-Config-Manager

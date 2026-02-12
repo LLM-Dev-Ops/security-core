@@ -43,6 +43,17 @@ async function main(): Promise<void> {
       process.exit(result.allowed ? 0 : 1);
       break;
     }
+    case 'gate': {
+      const content = args[1] ?? '';
+      const type = (args[2] as 'prompt' | 'output') ?? 'prompt';
+      const policyExempt = args.includes('--exempt');
+      const orchestrator = createSimulatorOrchestrator();
+      const request: SecurityRequest = { id: `cli-${Date.now()}`, type, content };
+      const result = await orchestrator.executeGate(request, { policyExempt });
+      console.log(JSON.stringify(result, null, 2));
+      process.exit(result.gate.decision === 'allow' ? 0 : 1);
+      break;
+    }
     case 'status':
       console.log(JSON.stringify({ status: 'ready', mode: 'simulator', version: '1.0.0' }));
       break;
@@ -53,12 +64,17 @@ async function main(): Promise<void> {
 Commands:
   check <content> [type]  Process content through security orchestration
                           type: prompt | output (default: prompt)
+  gate <content> [type]   Enterprise simulation gate (required entry point)
+                          type: prompt | output (default: prompt)
+                          --exempt  Mark request as policy-exempt
   validate <content>      Quick validation check (returns VALID/BLOCKED)
   status                  Show service status
   help                    Show this help message
 
 Examples:
   llm-security check "Hello world" prompt
+  llm-security gate "Enterprise simulation input" prompt
+  llm-security gate "Exempt request" prompt --exempt
   llm-security validate "User input here"
   llm-security status`);
   }

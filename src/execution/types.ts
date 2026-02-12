@@ -1,7 +1,7 @@
 // Execution span types for agentics-execution-engine integration
 // Enforces hierarchical Core -> Repo -> Agent span invariant
 
-import type { SecurityResult } from '../lib.js';
+import type { SecurityResult, GateDecision } from '../lib.js';
 
 // ============================================================================
 // Span primitives
@@ -64,4 +64,5 @@ export interface CoreExecutionResult {
   result?: SecurityResult;
   status: SpanStatus;
   core_span_id: string;
+  gate_decision?: GateDecision;
 }
