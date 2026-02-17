@@ -6,6 +6,7 @@ import { createEdgeAgentAdapter } from './adapters/edge-agent.js';
 import { createIncidentAdapter } from './adapters/incident.js';
 import { createPolicyAdapter } from './adapters/policy.js';
 import { createConfigAdapter } from './adapters/config.js';
+import { routeScan, routeAuditRecord } from './services/router.js';
 import type { SecurityRequest, SecurityGateOptions } from './lib.js';
 
 const orchestrator = new SecurityOrchestrator({
@@ -57,6 +58,42 @@ const server = http.createServer(async (req, res) => {
         const result = await orchestrator.executeGate(request, options);
         const statusCode = result.gate.decision === 'allow' ? 200 : 403;
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: (err as Error).message }));
+      }
+    });
+    return;
+  }
+
+  // POST /v1/scan — non-blocking fan-out to Shield + Edge-Agent
+  if (req.method === 'POST' && req.url === '/v1/scan') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body);
+        const result = routeScan(payload);
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: (err as Error).message }));
+      }
+    });
+    return;
+  }
+
+  // POST /v1/audit/record — non-blocking fan-out to Incident-Manager + Policy-Engine
+  if (req.method === 'POST' && req.url === '/v1/audit/record') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body);
+        const result = routeAuditRecord(payload);
+        res.writeHead(202, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });

@@ -90,6 +90,8 @@ export { createEdgeAgentAdapter } from './adapters/edge-agent.js';
 export { createIncidentAdapter } from './adapters/incident.js';
 export { createPolicyAdapter } from './adapters/policy.js';
 export { createConfigAdapter } from './adapters/config.js';
+export { routeScan, routeAuditRecord } from './services/router.js';
+export type { RouteTarget, RouteResult } from './services/router.js';
 
 // Execution span types and utilities (agentics-execution-engine)
 export type {
