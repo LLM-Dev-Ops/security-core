@@ -439,43 +439,11 @@ src/
 
 ## 📄 License
 
-> ⚠️ **This software is NOT open-source. It is NOT licensed under MIT, Apache, or any permissive license.**
+This project is licensed under the **LLMDevOps-PSACL v1.0** — a source-available commercial license owned by **Global Business Advisors Inc.**
 
-This project is licensed under the **LLM Dev Ops Permanent Source-Available Commercial License (LLMDevOps-PSACL v1.0)** — a proprietary, restrictive license owned by **Global Business Advisors Inc.**
+A **commercial license is required** for production, enterprise, or customer-facing use.
 
-<details>
-<summary>🔒 <strong>License Summary — Read Before Use</strong></summary>
-
-<br/>
-
-### ✅ You MAY:
-- View the source code
-- Modify the source code for private, personal learning
-- Use it for **non-production** evaluation, testing, and research only
-
-### 🚫 You MAY NOT:
-- Deploy in production
-- Use commercially or for revenue generation
-- Host, embed, or offer as a service (SaaS / API / managed)
-- Distribute, publish, fork, re-upload, or share with third parties
-- Incorporate into any commercial product or paid service
-- Use to build, train, or power any competing product
-- Sublicense, sell, or re-license in any form
-- Share derivative works with colleagues, clients, or the public
-
-### 🏢 Commercial / Production Use
-A **paid commercial license is required** for any production, enterprise, hosted, or customer-facing use.
-
-📧 **Contact:** [sales@globalbusinessadvisors.co](mailto:sales@globalbusinessadvisors.co)
-
-### 🔐 Permanent Restrictions
-- This license **will NOT** convert to Apache, MIT, or any open-source license — ever
-- All restrictions are **perpetual and irrevocable**
-- Violations result in **automatic termination** and you must destroy all copies
-
-</details>
-
-See [LICENSE.md](LICENSE.md) for the full legal text.
+📧 **Contact:** [sales@globalbusinessadvisors.co](mailto:sales@globalbusinessadvisors.co) | See [LICENSE.md](LICENSE.md) for full terms.
 
 **© 2025 Global Business Advisors Inc. All rights reserved.**
 
