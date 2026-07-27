@@ -37,6 +37,26 @@ export interface OrchestratorConfig {
   incident: IncidentAdapter;
   policy: PolicyAdapter;
   config: ConfigAdapter;
+  /** Set only by createSimulatorSecurityCore(); stamps `simulated: true` onto every GateResult. */
+  simulated?: boolean;
+}
+
+export const POLICY_ENGINE_UNAVAILABLE = 'policy-engine-unavailable';
+export const SHIELD_UNAVAILABLE = 'shield-unavailable';
+
+/**
+ * Raised when a mandatory gate dependency could not be consulted. Carries the
+ * violation policy name so the denial names the component that was unavailable.
+ */
+export class GateUnavailableError extends Error {
+  readonly policyName: string;
+
+  constructor(policyName: string, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'GateUnavailableError';
+    this.policyName = policyName;
+    this.cause = cause;
+  }
 }
 
 export interface GateExecutionResult {
@@ -61,23 +81,29 @@ export class SecurityOrchestrator {
   ): Promise<GateResult> {
     const { policyExempt = false } = options;
 
-    // 1. ALWAYS evaluate policies via LLM-Policy-Engine (mandatory)
-    let decisions = await this.adapters.policy.evaluate(request);
-
-    // If policy-exempt, override all decisions to allow but preserve audit trail
-    if (policyExempt) {
-      decisions = decisions.map(d => ({
-        ...d,
-        action: 'allow' as const,
-        reason: `policy-exempt (original: ${d.action}${d.reason ? ' - ' + d.reason : ''})`
-      }));
+    // 1. ALWAYS evaluate policies via LLM-Policy-Engine (mandatory).
+    //    A policy engine that cannot be consulted denies. There is no path
+    //    from "cannot evaluate" to allow.
+    let decisions: import('../lib.js').PolicyDecision[];
+    try {
+      decisions = await this.adapters.policy.evaluate(request);
+    } catch (err) {
+      return this.failClosed(request, POLICY_ENGINE_UNAVAILABLE, err, policyExempt);
     }
 
-    // 2. ALWAYS filter via LLM-Shield (mandatory, unconditional)
-    const shieldResult = await this.adapters.shield.filter(
-      request.content,
-      request.type === 'runtime' ? 'prompt' : request.type
-    );
+    decisions = this.applyExemption(decisions, policyExempt);
+
+    // 2. ALWAYS filter via LLM-Shield (mandatory, unconditional). Unfiltered
+    //    content never proceeds because the filter was unreachable.
+    let shieldResult;
+    try {
+      shieldResult = await this.adapters.shield.filter(
+        request.content,
+        request.type === 'runtime' ? 'prompt' : request.type
+      );
+    } catch (err) {
+      return this.failClosed(request, SHIELD_UNAVAILABLE, err, policyExempt);
+    }
 
     // 3. Compute aggregate gate decision (most restrictive wins)
     const decision = this.computeGateDecision(decisions);
@@ -109,7 +135,63 @@ export class SecurityOrchestrator {
       shieldResult: { filtered: shieldResult.filtered, redactions: shieldResult.redactions ?? [] },
       violations: violations.length > 0 ? violations : undefined,
       incidentId,
-      policyExempt
+      policyExempt,
+      simulated: this.simulated
+    };
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Fail-closed helpers
+  // ──────────────────────────────────────────────────────────────────────────
+
+  private get simulated(): true | undefined {
+    return this.adapters.simulated === true ? true : undefined;
+  }
+
+  /**
+   * A caller-supplied exemption may downgrade advisory decisions, but it can
+   * never overturn an explicit deny — that would let an unauthenticated caller
+   * unilaterally bypass a security denial.
+   */
+  private applyExemption(
+    decisions: import('../lib.js').PolicyDecision[],
+    policyExempt: boolean
+  ): import('../lib.js').PolicyDecision[] {
+    if (!policyExempt) return decisions;
+    return decisions.map(d => d.action === 'deny' ? d : {
+      ...d,
+      action: 'allow' as const,
+      reason: `policy-exempt (original: ${d.action}${d.reason ? ' - ' + d.reason : ''})`
+    });
+  }
+
+  private async failClosed(
+    request: SecurityRequest,
+    policy: string,
+    err: unknown,
+    policyExempt: boolean
+  ): Promise<GateResult> {
+    const reason = err instanceof Error ? err.message : String(err);
+
+    let incidentId: string | undefined;
+    try {
+      incidentId = (await this.emitViolation(request, policy, 'critical')).incidentId;
+    } catch {
+      // The incident manager may be part of the same outage. The denial stands
+      // either way; an unrecorded incident is reported as absent, never faked.
+      incidentId = undefined;
+    }
+
+    return {
+      requestId: request.id,
+      decision: 'deny',
+      policyDecisions: [{ policyId: policy, action: 'deny', reason }],
+      // No content is echoed as "filtered" when filtering did not happen.
+      shieldResult: { filtered: '', redactions: [] },
+      violations: [{ policy, severity: 'critical' }],
+      incidentId,
+      policyExempt,
+      simulated: this.simulated
     };
   }
 
@@ -138,6 +220,7 @@ export class SecurityOrchestrator {
 
     let gateResult: GateResult | undefined;
     let status: SpanStatus = 'ok';
+    let unavailable: { policy: string; reason: string } | undefined;
 
     try {
       gateResult = await this.gateInstrumented(request, coreSpan, policyExempt);
@@ -150,7 +233,12 @@ export class SecurityOrchestrator {
       finalizeSpan(coreSpan, status);
     } catch (err) {
       status = 'failed';
-      failSpan(coreSpan, (err as Error).message);
+      const reason = err instanceof Error ? err.message : String(err);
+      failSpan(coreSpan, reason);
+      unavailable = {
+        policy: err instanceof GateUnavailableError ? err.policyName : POLICY_ENGINE_UNAVAILABLE,
+        reason
+      };
     }
 
     // Attach the GateResult as a core-level artifact
@@ -178,9 +266,16 @@ export class SecurityOrchestrator {
       gate: gateResult ?? {
         requestId: request.id,
         decision: 'deny',
-        policyDecisions: [],
-        shieldResult: { filtered: request.content, redactions: [] },
-        policyExempt
+        policyDecisions: [{
+          policyId: unavailable?.policy ?? POLICY_ENGINE_UNAVAILABLE,
+          action: 'deny',
+          reason: unavailable?.reason ?? 'gate could not be evaluated'
+        }],
+        // Unfiltered content is not echoed back as a filter result.
+        shieldResult: { filtered: '', redactions: [] },
+        violations: [{ policy: unavailable?.policy ?? POLICY_ENGINE_UNAVAILABLE, severity: 'critical' }],
+        policyExempt,
+        simulated: this.simulated
       },
       status,
       core_span_id: coreSpan.span_id
@@ -192,35 +287,39 @@ export class SecurityOrchestrator {
     coreSpan: ExecutionSpan,
     policyExempt: boolean
   ): Promise<GateResult> {
-    // 1. ALWAYS invoke LLM-Policy-Engine (mandatory, with span)
-    let decisions = await this.invokeRepo(
-      coreSpan,
-      'llm-policy-engine',
-      'policy-evaluator',
-      () => this.adapters.policy.evaluate(request),
-      { requestId: request.id, gate: true }
-    );
-
-    // If policy-exempt, override decisions but preserve audit trail
-    if (policyExempt) {
-      decisions = decisions.map(d => ({
-        ...d,
-        action: 'allow' as const,
-        reason: `policy-exempt (original: ${d.action}${d.reason ? ' - ' + d.reason : ''})`
-      }));
+    // 1. ALWAYS invoke LLM-Policy-Engine (mandatory, with span). An engine that
+    //    cannot be consulted denies; the failed spans remain in the graph.
+    let decisions: import('../lib.js').PolicyDecision[];
+    try {
+      decisions = await this.invokeRepo(
+        coreSpan,
+        'llm-policy-engine',
+        'policy-evaluator',
+        () => this.adapters.policy.evaluate(request),
+        { requestId: request.id, gate: true }
+      );
+    } catch (err) {
+      throw new GateUnavailableError(POLICY_ENGINE_UNAVAILABLE, err);
     }
 
+    decisions = this.applyExemption(decisions, policyExempt);
+
     // 2. ALWAYS invoke LLM-Shield (mandatory, unconditional, with span)
-    const shieldResult = await this.invokeRepo(
-      coreSpan,
-      'llm-shield',
-      'content-filter',
-      () => this.adapters.shield.filter(
-        request.content,
-        request.type === 'runtime' ? 'prompt' : request.type
-      ),
-      { mode: request.type === 'runtime' ? 'prompt' : request.type, gate: true }
-    );
+    let shieldResult;
+    try {
+      shieldResult = await this.invokeRepo(
+        coreSpan,
+        'llm-shield',
+        'content-filter',
+        () => this.adapters.shield.filter(
+          request.content,
+          request.type === 'runtime' ? 'prompt' : request.type
+        ),
+        { mode: request.type === 'runtime' ? 'prompt' : request.type, gate: true }
+      );
+    } catch (err) {
+      throw new GateUnavailableError(SHIELD_UNAVAILABLE, err);
+    }
 
     // 3. Compute aggregate gate decision
     const decision = this.computeGateDecision(decisions);
@@ -273,7 +372,8 @@ export class SecurityOrchestrator {
       shieldResult: { filtered: shieldResult.filtered, redactions: shieldResult.redactions ?? [] },
       violations: violations.length > 0 ? violations : undefined,
       incidentId,
-      policyExempt
+      policyExempt,
+      simulated: this.simulated
     };
   }
 
@@ -358,8 +458,17 @@ export class SecurityOrchestrator {
   // ──────────────────────────────────────────────────────────────────────────
 
   async process(request: SecurityRequest): Promise<SecurityResult> {
-    // 1. Evaluate policies via LLM-Policy-Engine
-    const decisions = await this.adapters.policy.evaluate(request);
+    // 1. Evaluate policies via LLM-Policy-Engine. Unavailable means not allowed.
+    let decisions: import('../lib.js').PolicyDecision[];
+    try {
+      decisions = await this.adapters.policy.evaluate(request);
+    } catch {
+      return {
+        requestId: request.id,
+        allowed: false,
+        violations: [{ policy: POLICY_ENGINE_UNAVAILABLE, severity: 'critical' }]
+      };
+    }
 
     // 2. Determine aggregate action (most restrictive wins)
     const denyDecision = decisions.find(d => d.action === 'deny');
@@ -374,9 +483,17 @@ export class SecurityOrchestrator {
     let redactions: SecurityResult['redactions'] = [];
 
     if (filterDecision || request.type === 'prompt' || request.type === 'output') {
-      const shieldResult = await this.adapters.shield.filter(request.content, request.type === 'runtime' ? 'prompt' : request.type);
-      filtered = shieldResult.filtered;
-      redactions = shieldResult.redactions;
+      try {
+        const shieldResult = await this.adapters.shield.filter(request.content, request.type === 'runtime' ? 'prompt' : request.type);
+        filtered = shieldResult.filtered;
+        redactions = shieldResult.redactions;
+      } catch {
+        return {
+          requestId: request.id,
+          allowed: false,
+          violations: [{ policy: SHIELD_UNAVAILABLE, severity: 'critical' }]
+        };
+      }
     }
 
     // 4. Enforce runtime controls via LLM-Edge-Agent

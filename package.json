@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "node --test dist/tests/*.test.js",
+    "pretest": "npm run build",
+    "test": "node scripts/run-tests.mjs",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

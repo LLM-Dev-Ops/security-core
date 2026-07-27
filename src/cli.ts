@@ -1,24 +1,17 @@
 #!/usr/bin/env node
 // LLM-Security-Core CLI
-import { SecurityOrchestrator } from './services/orchestrator.js';
-import { createShieldAdapter } from './adapters/shield.js';
-import { createEdgeAgentAdapter } from './adapters/edge-agent.js';
-import { createIncidentAdapter } from './adapters/incident.js';
-import { createPolicyAdapter } from './adapters/policy.js';
-import { createConfigAdapter } from './adapters/config.js';
+import { createSimulatorSecurityCore } from './sdk.js';
 import type { SecurityRequest } from './lib.js';
 
 const args = process.argv.slice(2);
 const command = args[0];
 
-function createSimulatorOrchestrator(): SecurityOrchestrator {
-  return new SecurityOrchestrator({
-    shield: createShieldAdapter(),
-    edgeAgent: createEdgeAgentAdapter(),
-    incident: createIncidentAdapter(),
-    policy: createPolicyAdapter(),
-    config: createConfigAdapter()
-  });
+// The CLI is a local development tool: it runs the explicit simulator core,
+// which refuses to construct under NODE_ENV=production.
+function createSimulatorOrchestrator() {
+  const orchestrator = createSimulatorSecurityCore();
+  console.error('[simulator] no real security clients configured — results are not enforcement');
+  return orchestrator;
 }
 
 async function main(): Promise<void> {
@@ -67,6 +60,7 @@ Commands:
   gate <content> [type]   Enterprise simulation gate (required entry point)
                           type: prompt | output (default: prompt)
                           --exempt  Mark request as policy-exempt
+                                    (cannot override an explicit deny)
   validate <content>      Quick validation check (returns VALID/BLOCKED)
   status                  Show service status
   help                    Show this help message

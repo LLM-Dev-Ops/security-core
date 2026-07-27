@@ -1,21 +1,23 @@
 // HTTP server for Cloud Run deployment
 import http from 'node:http';
-import { SecurityOrchestrator } from './services/orchestrator.js';
-import { createShieldAdapter } from './adapters/shield.js';
-import { createEdgeAgentAdapter } from './adapters/edge-agent.js';
-import { createIncidentAdapter } from './adapters/incident.js';
-import { createPolicyAdapter } from './adapters/policy.js';
-import { createConfigAdapter } from './adapters/config.js';
+import { createSimulatorSecurityCore } from './sdk.js';
 import { routeScan, routeAuditRecord } from './services/router.js';
+import { gateStatusCode } from './lib.js';
 import type { SecurityRequest, SecurityGateOptions } from './lib.js';
 
-const orchestrator = new SecurityOrchestrator({
-  shield: createShieldAdapter(),
-  edgeAgent: createEdgeAgentAdapter(),
-  incident: createIncidentAdapter(),
-  policy: createPolicyAdapter(),
-  config: createConfigAdapter()
-});
+// The server has no real peer clients wired. Rather than fall back to
+// pass-through adapters, it refuses to start unless simulator mode is
+// requested explicitly — misconfiguration is a loud startup failure, not a
+// gate that silently allows everything.
+if (process.env.SECURITY_CORE_SIMULATOR !== '1') {
+  throw new Error(
+    'security-core has no security clients configured. Wire real clients via ' +
+    'createSecurityCore(), or set SECURITY_CORE_SIMULATOR=1 to run the ' +
+    'non-production simulator explicitly.'
+  );
+}
+
+const orchestrator = createSimulatorSecurityCore();
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
@@ -56,7 +58,7 @@ const server = http.createServer(async (req, res) => {
           options?: SecurityGateOptions;
         };
         const result = await orchestrator.executeGate(request, options);
-        const statusCode = result.gate.decision === 'allow' ? 200 : 403;
+        const statusCode = gateStatusCode(result.gate.decision);
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {

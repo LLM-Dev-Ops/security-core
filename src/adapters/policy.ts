@@ -1,15 +1,18 @@
 // Adapter for LLM-Policy-Engine (14) - Declarative Security Policies
-import type { PolicyAdapter, SecurityRequest, PolicyDecision } from '../lib.js';
+import type { PolicyAdapter, SecurityRequest } from '../lib.js';
+import {
+  AdapterNotConfiguredError,
+  validatePolicyDecisions,
+  type PolicyEngineClient
+} from './types.js';
 
-export function createPolicyAdapter(policyEngine?: { evaluate: Function }): PolicyAdapter {
+export function createPolicyAdapter(policyEngine?: PolicyEngineClient): PolicyAdapter {
+  if (!policyEngine) {
+    throw new AdapterNotConfiguredError('createPolicyAdapter', 'PolicyEngineClient');
+  }
   return {
     async evaluate(request: SecurityRequest) {
-      if (!policyEngine) {
-        // Simulator mode: default allow policy
-        return [{ policyId: 'default', action: 'allow' as const }];
-      }
-      const decisions = await policyEngine.evaluate(request);
-      return decisions as PolicyDecision[];
+      return validatePolicyDecisions(await policyEngine.evaluate(request));
     }
   };
 }

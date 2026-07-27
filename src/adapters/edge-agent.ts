@@ -1,18 +1,18 @@
 // Adapter for LLM-Edge-Agent (8) - Runtime Protection Enforcement
 import type { EdgeAgentAdapter, SecurityRequest, PolicyDecision } from '../lib.js';
+import {
+  AdapterNotConfiguredError,
+  validateEdgeAgentResponse,
+  type EdgeAgentClient
+} from './types.js';
 
-export function createEdgeAgentAdapter(edgeAgent?: { enforce: Function }): EdgeAgentAdapter {
+export function createEdgeAgentAdapter(edgeAgent?: EdgeAgentClient): EdgeAgentAdapter {
+  if (!edgeAgent) {
+    throw new AdapterNotConfiguredError('createEdgeAgentAdapter', 'EdgeAgentClient');
+  }
   return {
     async enforce(request: SecurityRequest, decision: PolicyDecision) {
-      if (!edgeAgent) {
-        // Simulator mode: honor decision without enforcement
-        return { enforced: decision.action !== 'deny', modifications: undefined };
-      }
-      const result = await edgeAgent.enforce({ request, decision });
-      return {
-        enforced: result.enforced ?? true,
-        modifications: result.modifications
-      };
+      return validateEdgeAgentResponse(await edgeAgent.enforce({ request, decision }));
     }
   };
 }
