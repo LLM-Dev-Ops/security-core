@@ -43,6 +43,13 @@ export interface GateResult {
   violations?: Array<{ policy: string; severity: 'low' | 'medium' | 'high' | 'critical' }>;
   incidentId?: string;
   policyExempt: boolean;
+  /** Present only for results produced via createSimulatorSecurityCore(). */
+  simulated?: boolean;
+}
+
+/** HTTP status for a gate decision: anything short of an allow is a 403. */
+export function gateStatusCode(decision: GateDecision): number {
+  return decision === 'allow' ? 200 : 403;
 }
 
 export interface SecurityGateOptions {
@@ -83,13 +90,43 @@ export interface ConfigAdapter {
 // Re-exports
 // ============================================================================
 
-export { SecurityOrchestrator, type GateExecutionResult } from './services/orchestrator.js';
+export {
+  SecurityOrchestrator,
+  GateUnavailableError,
+  POLICY_ENGINE_UNAVAILABLE,
+  SHIELD_UNAVAILABLE,
+  type GateExecutionResult,
+  type OrchestratorConfig
+} from './services/orchestrator.js';
 export { handleSecurityRequest, handleSecurityEvent, handleSecurityGate } from './handlers/security.js';
 export { createShieldAdapter } from './adapters/shield.js';
 export { createEdgeAgentAdapter } from './adapters/edge-agent.js';
 export { createIncidentAdapter } from './adapters/incident.js';
 export { createPolicyAdapter } from './adapters/policy.js';
 export { createConfigAdapter } from './adapters/config.js';
+export {
+  AdapterNotConfiguredError,
+  UpstreamResponseError,
+  type ShieldClient,
+  type EdgeAgentClient,
+  type IncidentManagerClient,
+  type PolicyEngineClient,
+  type ConfigManagerClient,
+  type ShieldFilterRequest,
+  type ShieldFilterResponse,
+  type EdgeAgentEnforceRequest,
+  type EdgeAgentEnforceResponse,
+  type IncidentEmitResponse,
+  type Redaction
+} from './adapters/types.js';
+export {
+  SimulatorNotPermittedError,
+  simulatorShield,
+  simulatorEdgeAgent,
+  simulatorIncidentManager,
+  simulatorPolicyEngine,
+  simulatorConfigManager
+} from './adapters/simulator.js';
 export { routeScan, routeAuditRecord } from './services/router.js';
 export type { RouteTarget, RouteResult } from './services/router.js';
 

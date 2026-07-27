@@ -55,8 +55,8 @@ specialized LLM security services — without implementing core security logic i
 </td>
 <td>
 
-🧪 **Simulator Mode**<br/>
-<sub>Pass-through behavior when peer services aren't available</sub>
+🧪 **Explicit Simulator Mode**<br/>
+<sub>Opt-in pass-through for local development via <code>createSimulatorSecurityCore()</code> — never a fallback, refused in production</sub>
 
 </td>
 </tr>
@@ -164,7 +164,8 @@ Request ──▶ Policy ──▶ Filter ──▶ Enforce ──▶ Report ─
 | 🪶 **Thin Adapters** | All integrations use minimal adapter interfaces that delegate to upstream systems |
 | 🚫 **No Infrastructure Ownership** | Does not implement retry logic, circuit breakers, logging, metrics, tracing, rate limiting, or caching |
 | 🧩 **No Core Logic** | Does not implement policy engines, filtering algorithms, or security detection logic |
-| 🧪 **Simulator Compatible** | All adapters support pass-through mode for standalone testing |
+| 🔒 **Fail Closed** | Adapters throw when their client is missing; a gate that cannot evaluate denies (see [ADR-0001](docs/adr/ADR-0001-adapters-must-fail-closed.md)) |
+| 🧪 **Simulator Compatible** | Pass-through is available only through the explicit `createSimulatorSecurityCore()` entrypoint, which stamps `simulated: true` and refuses to construct under `NODE_ENV=production` |
 
 </details>
 
@@ -173,15 +174,15 @@ Request ──▶ Policy ──▶ Filter ──▶ Enforce ──▶ Report ─
 
 <br/>
 
-All peer dependencies are optional — when absent, the orchestrator runs in simulator mode:
+These packages are optional **as npm dependencies** — clients are supplied by injection, so `security-core` never imports them. They are **not** optional for production use: `createSecurityCore()` throws if any client is missing, and there is no permissive fallback.
 
-| Package | Purpose | Required |
+| Package | Purpose | Client required in production |
 |---------|---------|:--------:|
-| `llm-shield` | Prompt and output content filtering | ❌ |
-| `llm-edge-agent` | Runtime protection enforcement | ❌ |
-| `llm-incident-manager` | Security alerting and escalation | ❌ |
-| `llm-policy-engine` | Declarative security policy evaluation | ❌ |
-| `llm-config-manager` | Centralized configuration management | ❌ |
+| `llm-shield` | Prompt and output content filtering | ✅ |
+| `llm-edge-agent` | Runtime protection enforcement | ✅ |
+| `llm-incident-manager` | Security alerting and escalation | ✅ |
+| `llm-policy-engine` | Declarative security policy evaluation | ✅ |
+| `llm-config-manager` | Centralized configuration management | ✅ |
 
 </details>
 
@@ -194,9 +195,11 @@ All peer dependencies are optional — when absent, the orchestrator runs in sim
 
 <br/>
 
-#### `createSecurityCore(options?)`
+#### `createSecurityCore(config)`
 
-Factory function that creates a configured `SecurityOrchestrator` instance.
+Factory function that creates a configured `SecurityOrchestrator` instance. All
+five clients are required — a missing client throws `AdapterNotConfiguredError`
+at construction rather than degrading to a permissive default.
 
 ```typescript
 import { createSecurityCore } from 'llm-security-core';
@@ -210,8 +213,10 @@ const security = createSecurityCore({
   configManager: configManagerInstance
 });
 
-// Simulator mode (no dependencies)
-const simulator = createSecurityCore();
+// Local development only: explicit, self-identifying, refused in production.
+// Results carry `simulated: true`.
+import { createSimulatorSecurityCore } from 'llm-security-core';
+const simulator = createSimulatorSecurityCore();
 ```
 
 #### `security.process(request)`
@@ -391,7 +396,7 @@ export { createSecurityCore } from './sdk';
 # Build the project
 npm run build
 
-# Run tests
+# Run tests (builds first; fails if no tests are found)
 npm test
 
 # Type-check without emitting

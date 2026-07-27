@@ -1,25 +1,10 @@
 // Tests for execution span instrumentation (agentics-execution-engine)
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { SecurityOrchestrator } from '../services/orchestrator.js';
-import { createShieldAdapter } from '../adapters/shield.js';
-import { createEdgeAgentAdapter } from '../adapters/edge-agent.js';
-import { createIncidentAdapter } from '../adapters/incident.js';
-import { createPolicyAdapter } from '../adapters/policy.js';
-import { createConfigAdapter } from '../adapters/config.js';
 import { validateExecutionGraph, buildExecutionGraph, createSpan } from '../execution/span.js';
-import type { SecurityRequest } from '../lib.js';
+import { createTestOrchestrator } from './doubles.js';
+import type { SecurityRequest, PolicyDecision } from '../lib.js';
 import type { ExecutionSpan } from '../execution/types.js';
-
-function createTestOrchestrator() {
-  return new SecurityOrchestrator({
-    shield: createShieldAdapter(),
-    edgeAgent: createEdgeAgentAdapter(),
-    incident: createIncidentAdapter(),
-    policy: createPolicyAdapter(),
-    config: createConfigAdapter()
-  });
-}
 
 describe('ExecutionGraph - execute()', () => {
   it('should return a CoreExecutionResult with valid execution graph', async () => {
@@ -68,7 +53,7 @@ describe('ExecutionGraph - execute()', () => {
 
     const repoNames = execResult.execution_graph.root.children.map(c => c.name);
 
-    // In simulator mode with allow decision: policy-engine, shield, edge-agent
+    // Allow decision path: policy-engine, shield, edge-agent
     assert.ok(repoNames.includes('llm-policy-engine'), 'Must have llm-policy-engine span');
     assert.ok(repoNames.includes('llm-shield'), 'Must have llm-shield span');
     assert.ok(repoNames.includes('llm-edge-agent'), 'Must have llm-edge-agent span');
@@ -169,17 +154,12 @@ describe('ExecutionGraph - execute()', () => {
 
 describe('ExecutionGraph - failure semantics', () => {
   it('should handle repo invocation errors and include failed spans', async () => {
-    const failingPolicyAdapter = {
-      async evaluate() {
-        throw new Error('Policy engine unavailable');
+    const orchestrator = createTestOrchestrator({
+      policy: {
+        async evaluate(): Promise<PolicyDecision[]> {
+          throw new Error('Policy engine unavailable');
+        }
       }
-    };
-    const orchestrator = new SecurityOrchestrator({
-      shield: createShieldAdapter(),
-      edgeAgent: createEdgeAgentAdapter(),
-      incident: createIncidentAdapter(),
-      policy: failingPolicyAdapter,
-      config: createConfigAdapter()
     });
 
     const request: SecurityRequest = { id: 'fail-1', type: 'prompt', content: 'Test' };
@@ -202,12 +182,10 @@ describe('ExecutionGraph - failure semantics', () => {
   });
 
   it('should return execution graph even on total failure', async () => {
-    const failingOrchestrator = new SecurityOrchestrator({
-      shield: createShieldAdapter(),
-      edgeAgent: createEdgeAgentAdapter(),
-      incident: createIncidentAdapter(),
-      policy: { async evaluate() { throw new Error('total failure'); } },
-      config: createConfigAdapter()
+    const failingOrchestrator = createTestOrchestrator({
+      policy: {
+        async evaluate(): Promise<PolicyDecision[]> { throw new Error('total failure'); }
+      }
     });
 
     const request: SecurityRequest = { id: 'fail-2', type: 'prompt', content: 'Test' };

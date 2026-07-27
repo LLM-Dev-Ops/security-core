@@ -1,5 +1,6 @@
 // Tests for Security-Core gate semantics
-// Security is a gate, not an observer.
+// Security is a gate, not an observer. Adapters fail closed: an unconfigured
+// adapter is an error state, not a permissive mode.
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { SecurityOrchestrator } from '../services/orchestrator.js';
@@ -8,21 +9,12 @@ import { createEdgeAgentAdapter } from '../adapters/edge-agent.js';
 import { createIncidentAdapter } from '../adapters/incident.js';
 import { createPolicyAdapter } from '../adapters/policy.js';
 import { createConfigAdapter } from '../adapters/config.js';
+import { AdapterNotConfiguredError } from '../adapters/types.js';
+import { createSimulatorSecurityCore } from '../sdk.js';
+import { SimulatorNotPermittedError } from '../adapters/simulator.js';
+import { createTestOrchestrator } from './doubles.js';
+import { gateStatusCode } from '../lib.js';
 import type { SecurityRequest, PolicyDecision } from '../lib.js';
-import type { ExecutionSpan } from '../execution/types.js';
-
-function createTestOrchestrator(overrides?: {
-  policy?: { evaluate: Function };
-  shield?: { filter: Function };
-}) {
-  return new SecurityOrchestrator({
-    shield: createShieldAdapter(overrides?.shield),
-    edgeAgent: createEdgeAgentAdapter(),
-    incident: createIncidentAdapter(),
-    policy: createPolicyAdapter(overrides?.policy),
-    config: createConfigAdapter()
-  });
-}
 
 const baseRequest: SecurityRequest = { id: 'gate-1', type: 'prompt', content: 'Test content' };
 
@@ -30,9 +22,159 @@ const baseRequest: SecurityRequest = { id: 'gate-1', type: 'prompt', content: 'T
 // gate() - explicit decision semantics
 // ============================================================================
 
+// ============================================================================
+// ADR-0001 primary regression: unconfigured adapters fail closed
+// ============================================================================
+
+describe('adapters fail closed', () => {
+  // This is the inversion of the pre-ADR test that constructed an orchestrator
+  // with no clients at all and asserted `decision === 'allow'`.
+  it('should throw at construction when no clients are configured', () => {
+    assert.throws(
+      () => new SecurityOrchestrator({
+        shield: createShieldAdapter(),
+        edgeAgent: createEdgeAgentAdapter(),
+        incident: createIncidentAdapter(),
+        policy: createPolicyAdapter(),
+        config: createConfigAdapter()
+      }),
+      AdapterNotConfiguredError
+    );
+  });
+
+  it('should throw from every adapter factory with no client', () => {
+    assert.throws(() => createPolicyAdapter(), AdapterNotConfiguredError);
+    assert.throws(() => createShieldAdapter(), AdapterNotConfiguredError);
+    assert.throws(() => createEdgeAgentAdapter(), AdapterNotConfiguredError);
+    assert.throws(() => createIncidentAdapter(), AdapterNotConfiguredError);
+    assert.throws(() => createConfigAdapter(), AdapterNotConfiguredError);
+  });
+
+  it('should deny when the policy engine is unreachable', async () => {
+    const orchestrator = createTestOrchestrator({
+      policy: { async evaluate(): Promise<PolicyDecision[]> { throw new Error('connect ECONNREFUSED'); } }
+    });
+    const result = await orchestrator.gate(baseRequest);
+
+    assert.strictEqual(result.decision, 'deny');
+    assert.ok(result.violations);
+    assert.strictEqual(result.violations[0].policy, 'policy-engine-unavailable');
+    assert.strictEqual(result.violations[0].severity, 'critical');
+  });
+
+  it('should deny when the shield is unreachable rather than pass content through', async () => {
+    const orchestrator = createTestOrchestrator({
+      shield: { async filter() { throw new Error('shield down'); } }
+    });
+    const result = await orchestrator.gate(baseRequest);
+
+    assert.strictEqual(result.decision, 'deny');
+    assert.strictEqual(result.violations?.[0].policy, 'shield-unavailable');
+    assert.strictEqual(result.violations?.[0].severity, 'critical');
+    assert.strictEqual(result.shieldResult.filtered, '', 'unfiltered content must not be reported as filtered');
+  });
+
+  for (const [label, value] of [
+    ['undefined', undefined],
+    ['null', null],
+    ['a string', 'allow'],
+    ['an empty array', []],
+    ['[{}]', [{}]],
+    ['an unknown action', [{ policyId: 'p', action: 'permit' }]]
+  ] as Array<[string, unknown]>) {
+    it(`should deny when the policy engine resolves to ${label}`, async () => {
+      const orchestrator = createTestOrchestrator({
+        policy: { async evaluate() { return value as PolicyDecision[]; } }
+      });
+      const result = await orchestrator.gate(baseRequest);
+
+      assert.strictEqual(result.decision, 'deny', `malformed response (${label}) must not be coerced into an allow`);
+      assert.strictEqual(result.violations?.[0].policy, 'policy-engine-unavailable');
+    });
+  }
+
+  it('should deny when the shield response is malformed', async () => {
+    const orchestrator = createTestOrchestrator({
+      shield: { async filter() { return { redactions: [] } as unknown as { filtered: string }; } }
+    });
+    const result = await orchestrator.gate(baseRequest);
+
+    assert.strictEqual(result.decision, 'deny');
+    assert.strictEqual(result.violations?.[0].policy, 'shield-unavailable');
+  });
+
+  it('should never produce a fabricated sim-incident id outside simulator mode', async () => {
+    const orchestrator = createTestOrchestrator({
+      policy: {
+        async evaluate(): Promise<PolicyDecision[]> {
+          return [{ policyId: 'block-policy', action: 'deny' }];
+        }
+      }
+    });
+    const result = await orchestrator.gate(baseRequest);
+
+    assert.ok(result.incidentId);
+    assert.ok(!/^sim-incident-/.test(result.incidentId!), `incidentId must not be fabricated: ${result.incidentId}`);
+    assert.strictEqual(result.simulated, undefined);
+  });
+
+  it('should map an unavailable-gate denial to HTTP 403, not 200', async () => {
+    const orchestrator = createTestOrchestrator({
+      policy: { async evaluate(): Promise<PolicyDecision[]> { throw new Error('policy down'); } }
+    });
+    const result = await orchestrator.executeGate(baseRequest);
+
+    assert.strictEqual(result.gate.decision, 'deny');
+    assert.strictEqual(gateStatusCode(result.gate.decision), 403);
+    assert.strictEqual(result.gate.violations?.[0].policy, 'policy-engine-unavailable');
+    assert.strictEqual(result.gate.violations?.[0].severity, 'critical');
+  });
+
+  it('should report no incident id rather than invent one when the incident manager fails', async () => {
+    const orchestrator = createTestOrchestrator({
+      policy: { async evaluate(): Promise<PolicyDecision[]> { throw new Error('policy down'); } },
+      incident: { async emit(): Promise<{ incidentId: string }> { throw new Error('incident manager down'); } }
+    });
+    const result = await orchestrator.gate(baseRequest);
+
+    assert.strictEqual(result.decision, 'deny');
+    assert.strictEqual(result.incidentId, undefined);
+  });
+});
+
+// ============================================================================
+// Simulator mode - explicit, labelled, refused in production
+// ============================================================================
+
+describe('simulator mode', () => {
+  it('should stamp simulated: true on gate results', async () => {
+    const result = await createSimulatorSecurityCore().gate(baseRequest);
+
+    assert.strictEqual(result.simulated, true);
+    assert.strictEqual(result.decision, 'allow');
+  });
+
+  it('should refuse to construct under NODE_ENV=production', () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      assert.throws(() => createSimulatorSecurityCore(), SimulatorNotPermittedError);
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
+    }
+  });
+});
+
 describe('gate() - decision semantics', () => {
-  it('should return explicit allow decision when all policies allow', async () => {
-    const orchestrator = createTestOrchestrator();
+  it('should return explicit allow decision when a configured policy engine allows', async () => {
+    const orchestrator = createTestOrchestrator({
+      policy: {
+        async evaluate(): Promise<PolicyDecision[]> {
+          return [{ policyId: 'ok-policy', action: 'allow' }];
+        }
+      }
+    });
     const result = await orchestrator.gate(baseRequest);
 
     assert.strictEqual(result.decision, 'allow');
@@ -230,33 +372,44 @@ describe('gate() - mandatory service invocation', () => {
 // ============================================================================
 
 describe('gate() - policy exemption', () => {
-  it('should allow when policy-exempt even if policies would deny', async () => {
+  it('should NOT allow when policy-exempt if a policy explicitly denies', async () => {
     const orchestrator = createTestOrchestrator({
       policy: {
         async evaluate(): Promise<PolicyDecision[]> {
           return [{ policyId: 'deny-policy', action: 'deny', reason: 'Blocked' }];
+        }
+      }
+    });
+    const result = await orchestrator.gate(baseRequest, { policyExempt: true });
+
+    assert.strictEqual(result.decision, 'deny', 'a caller-supplied flag must not overturn an explicit deny');
+    assert.strictEqual(result.policyDecisions[0].action, 'deny');
+    assert.strictEqual(result.policyExempt, true);
+  });
+
+  it('should NOT allow when policy-exempt if the policy engine is unavailable', async () => {
+    const orchestrator = createTestOrchestrator({
+      policy: { async evaluate(): Promise<PolicyDecision[]> { throw new Error('policy down'); } }
+    });
+    const result = await orchestrator.gate(baseRequest, { policyExempt: true });
+
+    assert.strictEqual(result.decision, 'deny');
+  });
+
+  it('should downgrade non-deny decisions and preserve the audit trail', async () => {
+    const orchestrator = createTestOrchestrator({
+      policy: {
+        async evaluate(): Promise<PolicyDecision[]> {
+          return [{ policyId: 'approval-policy', action: 'require-approval', reason: 'Needs review' }];
         }
       }
     });
     const result = await orchestrator.gate(baseRequest, { policyExempt: true });
 
     assert.strictEqual(result.decision, 'allow');
-    assert.strictEqual(result.policyExempt, true);
-  });
-
-  it('should preserve audit trail when policy-exempt', async () => {
-    const orchestrator = createTestOrchestrator({
-      policy: {
-        async evaluate(): Promise<PolicyDecision[]> {
-          return [{ policyId: 'deny-policy', action: 'deny', reason: 'Blocked' }];
-        }
-      }
-    });
-    const result = await orchestrator.gate(baseRequest, { policyExempt: true });
-
     assert.strictEqual(result.policyDecisions[0].action, 'allow');
     assert.ok(result.policyDecisions[0].reason?.includes('policy-exempt'));
-    assert.ok(result.policyDecisions[0].reason?.includes('original: deny'));
+    assert.ok(result.policyDecisions[0].reason?.includes('original: require-approval'));
   });
 
   it('should still call Shield when policy-exempt', async () => {
