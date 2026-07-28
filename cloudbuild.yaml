@@ -1,0 +1,90 @@
+substitutions:
+  _ENV: prod
+  _REGION: us-central1
+  _SERVICE_NAME: security-core
+  _REPOSITORY: security-core
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  dynamic_substitutions: true
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE_NAME}:latest'
+      - '--cache-from'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE_NAME}:latest'
+      - '-f'
+      - 'Dockerfile'
+      - '.'
+    timeout: 1200s
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push'
+    waitFor: ['build']
+    args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE_NAME}']
+
+  # All five upstream URLs are set explicitly: a revision that reaches Cloud Run
+  # without them will refuse to start, so they are part of the deploy, not
+  # something an operator sets afterwards. NODE_ENV=production is likewise
+  # explicit rather than inherited from base-image behaviour, so
+  # assertSimulatorPermitted() reliably refuses simulator mode here.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy'
+    waitFor: ['push']
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--image'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--port'
+      - '8080'
+      - '--cpu'
+      - '1'
+      - '--memory'
+      - '512Mi'
+      - '--min-instances'
+      - '1'
+      - '--max-instances'
+      - '10'
+      - '--concurrency'
+      - '80'
+      - '--timeout'
+      - '60s'
+      - '--set-env-vars'
+      - >-
+        NODE_ENV=production,SERVICE_NAME=${_SERVICE_NAME},SERVICE_VERSION=${COMMIT_SHA},PLATFORM_ENV=${_ENV},SECURITY_UPSTREAM_TIMEOUT_MS=5000,POLICY_ENGINE_URL=https://policy-engine-xx7kwyd5ra-uc.a.run.app,SHIELD_URL=https://llm-shield-xx7kwyd5ra-uc.a.run.app,EDGE_AGENT_URL=https://llm-edge-agent-xx7kwyd5ra-uc.a.run.app,INCIDENT_MANAGER_URL=https://llm-incident-manager-xx7kwyd5ra-uc.a.run.app,CONFIG_MANAGER_URL=https://llm-config-manager-xx7kwyd5ra-uc.a.run.app
+      - '--labels'
+      - 'env=${_ENV},service=${_SERVICE_NAME},managed-by=cloud-build'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'verify'
+    waitFor: ['deploy']
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        sleep 10
+        SERVICE_URL=$(gcloud run services describe ${_SERVICE_NAME} \
+          --region=${_REGION} --format='value(status.url)')
+        CODE=$(curl -s -o /dev/null -w "%{http_code}" "$${SERVICE_URL}/health")
+        [ "$${CODE}" = "200" ] || { echo "health check failed: $${CODE}"; exit 1; }
+        echo "Deployed $${SERVICE_URL} at ${COMMIT_SHA}"
+
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE_NAME}:${COMMIT_SHA}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE_NAME}:latest'
+
+timeout: 1800s

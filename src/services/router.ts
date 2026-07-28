@@ -12,6 +12,19 @@ export interface RouteResult {
   routed_to: string[];
 }
 
+/**
+ * Base URLs for the fan-out targets. Supplied by the caller from the single
+ * resolved UpstreamConfig — there are deliberately no defaults here. The
+ * previous hardcoded fallbacks pointed at `llm-shield-dev`, so a production
+ * process with an unset env var silently fanned out to a dev deployment.
+ */
+export interface RouterUpstreams {
+  shieldUrl: string;
+  edgeAgentUrl: string;
+  incidentManagerUrl: string;
+  policyEngineUrl: string;
+}
+
 function dispatch(target: RouteTarget): void {
   fetch(target.url, {
     method: 'POST',
@@ -24,30 +37,17 @@ function dispatch(target: RouteTarget): void {
 }
 
 // ---------------------------------------------------------------------------
-// Service base URLs (Cloud Run)
-// ---------------------------------------------------------------------------
-
-const SHIELD_URL = process.env.LLM_SHIELD_URL
-  || 'https://llm-shield-dev-1062287243982.us-central1.run.app';
-
-const EDGE_AGENT_URL = process.env.LLM_EDGE_AGENT_URL
-  || 'https://llm-edge-agent-1062287243982.us-central1.run.app';
-
-const INCIDENT_MANAGER_URL = process.env.LLM_INCIDENT_MANAGER_URL
-  || 'https://llm-incident-manager-1062287243982.us-central1.run.app';
-
-const POLICY_ENGINE_URL = process.env.LLM_POLICY_ENGINE_URL
-  || 'https://policy-engine-1062287243982.us-central1.run.app';
-
-// ---------------------------------------------------------------------------
 // POST /v1/scan — routes scan requests to Shield + Edge-Agent
 // ---------------------------------------------------------------------------
 
-export function routeScan(payload: Record<string, unknown>): RouteResult {
+export function routeScan(
+  payload: Record<string, unknown>,
+  upstreams: RouterUpstreams
+): RouteResult {
   const targets: RouteTarget[] = [
     {
       name: 'llm-shield',
-      url: `${SHIELD_URL}/api/v1/scan`,
+      url: `${upstreams.shieldUrl}/api/v1/scan`,
       body: {
         content: payload.artifacts,
         source: payload.source,
@@ -56,7 +56,7 @@ export function routeScan(payload: Record<string, unknown>): RouteResult {
     },
     {
       name: 'llm-edge-agent',
-      url: `${EDGE_AGENT_URL}/agents/tool-invocation/execute`,
+      url: `${upstreams.edgeAgentUrl}/agents/tool-invocation/execute`,
       body: {
         action: 'security_scan',
         payload
@@ -78,16 +78,19 @@ export function routeScan(payload: Record<string, unknown>): RouteResult {
 // POST /v1/audit/record — routes audit events to Incident-Manager + Policy-Engine
 // ---------------------------------------------------------------------------
 
-export function routeAuditRecord(payload: Record<string, unknown>): RouteResult {
+export function routeAuditRecord(
+  payload: Record<string, unknown>,
+  upstreams: RouterUpstreams
+): RouteResult {
   const targets: RouteTarget[] = [
     {
       name: 'llm-incident-manager',
-      url: `${INCIDENT_MANAGER_URL}/api/v1/events`,
+      url: `${upstreams.incidentManagerUrl}/api/v1/events`,
       body: payload
     },
     {
       name: 'llm-policy-engine',
-      url: `${POLICY_ENGINE_URL}/api/evaluate`,
+      url: `${upstreams.policyEngineUrl}/api/evaluate`,
       body: {
         context: payload,
         action: payload.event
