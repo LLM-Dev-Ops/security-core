@@ -95,7 +95,7 @@ const run = (dir, argv) => {
   return {
     ok: child.status === 0,
     exit: child.status,
-    stdout: child.stdout.slice(-6000),
+    stdout: child.stdout,
     stderr: child.stderr.slice(-4000),
     argv,
   };
