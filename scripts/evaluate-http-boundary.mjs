@@ -102,9 +102,11 @@ const run = (dir, argv) => {
 };
 
 const evaluateHoldout = dir => {
+  const build = run(dir, ['npm', 'run', 'build']);
+  assert.equal(build.exit, 0, build.stderr || build.stdout);
   const command = run(dir, [process.execPath, '-e', holdoutSource]);
   assert.equal(command.exit, 0, command.stderr || command.stdout);
-  return { itemWins: JSON.parse(command.stdout).itemWins, command };
+  return { itemWins: JSON.parse(command.stdout).itemWins, command, commands: [build, command] };
 };
 
 const auditWithinBaseline = command => {
