@@ -71,7 +71,7 @@ server.listen(0, '127.0.0.1', async () => {
       content: 7,
     }), { 'Content-Type': 'application/json' }), result => result.status === 422],
     [await post(JSON.stringify({
-      id: 'request\\nsmuggling',
+      id: 'request' + String.fromCharCode(10) + 'smuggling',
       type: 'prompt',
       content: 'safe',
     }), { 'Content-Type': 'application/json' }), result => result.status === 422],
